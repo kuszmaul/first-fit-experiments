@@ -1,6 +1,16 @@
+#include <cassert>
 #include <cstddef>
 #include <iostream>
 #include <vector>
+
+class FirstFit;
+
+class Address {
+ private:
+  friend FirstFit;
+  Address(size_t address) :_address(address) {}
+  size_t _address;
+};
 
 class FirstFit {
  private:
@@ -10,13 +20,9 @@ class FirstFit {
   };
   std::vector<Block> busy_blocks;
  public:
-  class Address {
-   private:
-    friend FirstFit;
-    Address(size_t address) :_address(address) {}
-    size_t _address;
-  };
   Address Alloc(size_t size);
+  void Free([[maybe_unused]]  Address address) {
+  }
   size_t get_high_water() const {
     return _high_water;
   }
@@ -24,7 +30,7 @@ class FirstFit {
   size_t _high_water = 0;
 };
 
-FirstFit::Address FirstFit::Alloc(size_t size) {
+Address FirstFit::Alloc(size_t size) {
   size_t here = _high_water;
   _high_water += size;
   return Address(here);
@@ -32,6 +38,9 @@ FirstFit::Address FirstFit::Alloc(size_t size) {
 
 int main() {
   FirstFit ff;
-  ff.Alloc(10);
+  Address a = ff.Alloc(10);
+  ff.Free(a);
+  a = ff.Alloc(10);
   std::cout << "High-water = " << ff.get_high_water() << std::endl;
+  assert(ff.get_high_water() < 20);
 }
