@@ -47,6 +47,8 @@ class ReducerTree {
         return root;
       }
     }
+
+   private:
     static NodePtr SetLeft(NodePtr old_root, NodePtr new_left) {
       old_root->_left = std::move(new_left);
       if (!old_root->left() || old_root->priority() >=old_root->left()->priority()) {
@@ -89,10 +91,8 @@ class ReducerTree {
       NodePtr old_L = std::move(old_root->_left);
       NodePtr old_LR = std::move(old_L->_right);
 
-      old_root->_left = std::move(old_LR);
-      old_root->RecomputeReduced();
-      old_L->_right = std::move(old_root);
-      old_L->RecomputeReduced();
+      old_root->SetLeftAndUpdateReduced(std::move(old_LR));
+      old_L->SetRightAndUpdateReduced(std::move(old_root));
 
       return old_L;
     }
@@ -116,14 +116,21 @@ class ReducerTree {
       NodePtr old_R = std::move(old_root->_right);
       NodePtr old_RL = std::move(old_R->_left);
 
-      old_root->_right = std::move(old_RL);
-      old_root->RecomputeReduced();
-      old_R->_left = std::move(old_root);
-      old_R->RecomputeReduced();
+      old_root->SetRightAndUpdateReduced(std::move(old_RL));
+      old_R->SetLeftAndUpdateReduced(std::move(old_root));
       return old_R;
     }
 
-   private:
+    void SetLeftAndUpdateReduced(NodePtr new_left) {
+      _left = std::move(new_left);
+      RecomputeReduced();
+    }
+
+    void SetRightAndUpdateReduced(NodePtr new_right) {
+      _right = std::move(new_right);
+      RecomputeReduced();
+    }
+
     void RecomputeReduced() {
       _reduced = Reducer(key(), value());
       if (left()) {
