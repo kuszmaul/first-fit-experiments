@@ -9,13 +9,16 @@
 #include <cstddef>
 #include <iostream>
 #include <memory>
+#include <optional>
 #include <random>
 
 template <class K, class V, class Reducer>
 class ReducerTree {
- private:
+ public:
   class Node;
+ private:
   using NodePtr = std::unique_ptr<Node>;
+ public:
   class Node {
    public:
     Node(size_t priority, K key, V value)
@@ -46,6 +49,29 @@ class ReducerTree {
         inserted = false;
         return root;
       }
+    }
+
+    static const Node* Lookup(const NodePtr& node, const K& key) {
+      if (!node) {
+        return nullptr;
+      }
+      if (key < node->key()) {
+        return Lookup(node->left(), key);
+      }
+      if (node->key() < key) {
+        return Lookup(node->right(), key);
+      }
+      return node.get();
+    }
+
+    template <class Fun>
+    static bool Iterate(const NodePtr& node, Fun fun) {
+      if (node) {
+        return Iterate(node->left(), fun)
+            && fun(*node)
+            && Iterate(node->right(), fun);
+      }
+      return true;
     }
 
    private:
@@ -147,11 +173,15 @@ class ReducerTree {
     NodePtr _left;
     NodePtr _right;
   };
- public:
   // Return true if the insertion happened, false if it was already there.
   bool insert(K k, V v);
+  const Node* Lookup(const K& k) const;
   std::ostream& Print(std::ostream& os) const;
   void Validate() const;
+  template <class Fun>
+  bool Iterate(Fun fun) const {
+    return Node::Iterate(_root, fun);
+  }
 
  private:
   static void PrintNode(std::ostream& os, const NodePtr& node, size_t depth);
@@ -242,6 +272,11 @@ bool ReducerTree<K, V, Reducer>::insert(K k, V v) {
   bool result;
   _root = Node::Insert(std::move(_root), std::move(node), result);
   return result;
+}
+
+template <class K, class V, class Reducer>
+const typename ReducerTree<K, V, Reducer>::Node* ReducerTree<K, V, Reducer>::Lookup(const K& k) const {
+  return Node::Lookup(_root, k);
 }
 
 #endif  // _REDUCER_TREE_H
