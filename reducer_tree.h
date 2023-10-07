@@ -174,7 +174,15 @@ class ReducerTree {
     NodePtr _right;
   };
   // Return true if the insertion happened, false if it was already there.
-  bool insert(K k, V v);
+  bool Insert(K k, V v) {
+    Reducer reduced{k, v};
+    NodePtr node = std::make_unique<Node>(_uniform_distribution(_engine),
+                                          std::move(k),
+                                          std::move(v));
+    bool result;
+    _root = Node::Insert(std::move(_root), std::move(node), result);
+    return result;
+  }
   const Node* Lookup(const K& k) const {
     return Node::Lookup(_root, k);
   }
@@ -261,19 +269,6 @@ template <class K, class V, class Reducer>
     rhere = rhere + root->right()->reduced();
   }
   assert(rhere == root->reduced());
-}
-
-
-
-template <class K, class V, class Reducer>
-bool ReducerTree<K, V, Reducer>::insert(K k, V v) {
-  Reducer reduced{k, v};
-  NodePtr node = std::make_unique<Node>(_uniform_distribution(_engine),
-                                        std::move(k),
-                                        std::move(v));
-  bool result;
-  _root = Node::Insert(std::move(_root), std::move(node), result);
-  return result;
 }
 
 #endif  // _REDUCER_TREE_H

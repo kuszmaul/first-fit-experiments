@@ -42,11 +42,11 @@ void CheckTreeContains(const T& tree, const C& ordered_container) {
 static void Test1() {
   ReducerTree<size_t, std::string, StringToLengthReducer> tree;
   tree.Validate();
-  assert(tree.insert(3, "hello"));
+  assert(tree.Insert(3, "hello"));
   std::cout << tree << std::endl;
   tree.Validate();
   std::cout << "Validated" << std::endl;
-  assert(tree.insert(2, "a"));
+  assert(tree.Insert(2, "a"));
     std::cout << "Inserted 2" << std::endl;
   std::cout << tree << std::endl;
   tree.Validate();
