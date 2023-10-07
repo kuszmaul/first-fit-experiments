@@ -64,6 +64,51 @@ class ReducerTree {
       return node.get();
     }
 
+    static NodePtr Erase(NodePtr node, const K& key, bool& erased) {
+      if (!node) {
+        erased = false;
+        return node;
+      }
+      if (key < node->key()) {
+        node->SetLeftAndUpdateReduced(
+            Erase(std::move(node->_left), key, erased));
+        return node;
+      }
+      if (node->key() < key) {
+        node->SetRightAndUpdateReduced(
+            Erase(std::move(node->_right), key, erased));
+        return node;
+      }
+      erased = true;
+      return Concatenate(std::move(node->_left), std::move(node->_right));
+    }
+
+    // Returns the tree containing all the nodes of `a` and `b`.
+    //
+    // Requires: All keys in `a` are < all keys in `b`.
+    //
+    // Implementation hint: Note that `a` and `b` are both heap ordered by
+    // priority.  So one of `a` and `b` will be the root.
+    static NodePtr Concatenate(NodePtr a, NodePtr b) {
+      if (!a) {
+        return b;
+      }
+      if (!b) {
+        return a;
+      }
+      if (a->priority() > b->priority()) {
+        // `a` is the new root.
+        a->_right = Concatenate(std::move(a->_right), std::move(b));
+        a->RecomputeReduced();
+        return a;
+      } else {
+        // `b` is the new root
+        b->_left = Concatenate(std::move(a), std::move(b->_left));
+        b->RecomputeReduced();
+        return b;
+      }
+    }
+
     template <class Fun>
     static bool Iterate(const NodePtr& node, Fun fun) {
       if (node) {
@@ -185,6 +230,11 @@ class ReducerTree {
   }
   const Node* Lookup(const K& k) const {
     return Node::Lookup(_root, k);
+  }
+  bool Erase(K k) {
+    bool erased;
+    _root = Node::Erase(std::move(_root), k, erased);
+    return erased;
   }
   std::ostream& Print(std::ostream& os) const;
   void Validate() const;

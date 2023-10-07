@@ -52,6 +52,10 @@ static void Test1() {
   tree.Validate();
   std::map<size_t, std::string> expect({{2, "a"}, {3, "hello"}});
   CheckTreeContains(tree, expect);
+  tree.Erase(3);
+  expect.erase(3);
+  tree.Validate();
+  CheckTreeContains(tree, expect);
 }
 
 int main() {
