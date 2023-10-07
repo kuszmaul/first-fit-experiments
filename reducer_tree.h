@@ -33,7 +33,7 @@ class ReducerTree {
     static NodePtr Insert(NodePtr root, NodePtr node, bool& inserted) {
       if (!root) {
         inserted = true;
-        root->_reduced = Reducer(node->key(), node->value());
+        node->RecomputeReduced();
         return node;
       }
       if (node->key() < root->key()) {
