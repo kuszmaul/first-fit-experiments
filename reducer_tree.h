@@ -175,7 +175,9 @@ class ReducerTree {
   };
   // Return true if the insertion happened, false if it was already there.
   bool insert(K k, V v);
-  const Node* Lookup(const K& k) const;
+  const Node* Lookup(const K& k) const {
+    return Node::Lookup(_root, k);
+  }
   std::ostream& Print(std::ostream& os) const;
   void Validate() const;
   template <class Fun>
@@ -272,11 +274,6 @@ bool ReducerTree<K, V, Reducer>::insert(K k, V v) {
   bool result;
   _root = Node::Insert(std::move(_root), std::move(node), result);
   return result;
-}
-
-template <class K, class V, class Reducer>
-const typename ReducerTree<K, V, Reducer>::Node* ReducerTree<K, V, Reducer>::Lookup(const K& k) const {
-  return Node::Lookup(_root, k);
 }
 
 #endif  // _REDUCER_TREE_H
