@@ -1,253 +1,98 @@
 /* A reducer tree is a tree that also computes reductions over ranges, using an
  * associative operator.  Internal nodes maintain the reduced value of the range
- * below.  Implemented as a treap. */
+ * below.  Implemented as a treap.
+ *
+ * We don't try to be compatible with the std::map API: In particular, we don't
+ * have iterators.  So `Insert` returns a `bool` indicating whether the value
+ * was inserted.  `Find` returns an `optional<tuple>` of values.  Instead of
+ * iterate with have `ForAll` which takes a functor and applies it to all the
+ * elements of the tree.  Since it's not quite the same as `std::map` we also
+ * use camel case for the method names.
+ *
+ * We rely on the spaceship operator <=> working for keys.
+ */
 
 #ifndef _REDUCER_TREE_H
 #define _REDUCER_TREE_H
 
 #include <cassert>
 #include <cstddef>
+#include <functional>
 #include <iostream>
 #include <memory>
 #include <optional>
 #include <random>
 
 template <class K, class V, class Reducer>
+class ReducerNode;
+
+// A Reducer Tree is like an (ordered) map, where we also have a reduction value
+// for subtrees.
+template <class K, class V, class Reducer>
 class ReducerTree {
- public:
-  class Node;
  private:
-  using NodePtr = std::unique_ptr<Node>;
+  using Node = ReducerNode<K, V, Reducer>;
+  using Ptr = std::unique_ptr<Node>;
  public:
-  class Node {
-   public:
-    Node(size_t priority, K key, V value)
-        :_priority(priority)
-        ,_key(std::move(key))
-        ,_value(std::move(value))
-        ,_reduced(key, value) {}
-    size_t priority() const { return _priority; }
-    const K& key() const { return _key; }
-    const V& value() const { return _value; }
-    const NodePtr& left() const { return _left; }
-    const NodePtr& right() const { return _right; }
-    const Reducer& reduced() const { return _reduced; }
-    // root can be nullptr.  node must be a node with no children.
-    static NodePtr Insert(NodePtr root, NodePtr node, bool& inserted) {
-      if (!root) {
-        inserted = true;
-        node->RecomputeReduced();
-        return node;
-      }
-      if (node->key() < root->key()) {
-        NodePtr new_left = Insert(std::move(root->_left), std::move(node), inserted);
-        return SetLeft(std::move(root), std::move(new_left));
-      } else if (root->key() < node->key()) {
-        NodePtr new_right = Insert(std::move(root->_right), std::move(node), inserted);
-        return SetRight(std::move(root), std::move(new_right));
-      } else {
-        inserted = false;
-        return root;
-      }
-    }
+  using key_type = K;
+  using value_type = V;
+  using reducer_type = Reducer;
 
-    static const Node* Lookup(const NodePtr& node, const K& key) {
-      if (!node) {
-        return nullptr;
-      }
-      if (key < node->key()) {
-        return Lookup(node->left(), key);
-      }
-      if (node->key() < key) {
-        return Lookup(node->right(), key);
-      }
-      return node.get();
-    }
-
-    static NodePtr Erase(NodePtr node, const K& key, bool& erased) {
-      if (!node) {
-        erased = false;
-        return node;
-      }
-      if (key < node->key()) {
-        node->SetLeftAndUpdateReduced(
-            Erase(std::move(node->_left), key, erased));
-        return node;
-      }
-      if (node->key() < key) {
-        node->SetRightAndUpdateReduced(
-            Erase(std::move(node->_right), key, erased));
-        return node;
-      }
-      erased = true;
-      return Concatenate(std::move(node->_left), std::move(node->_right));
-    }
-
-    // Returns the tree containing all the nodes of `a` and `b`.
-    //
-    // Requires: All keys in `a` are < all keys in `b`.
-    //
-    // Implementation hint: Note that `a` and `b` are both heap ordered by
-    // priority.  So one of `a` and `b` will be the root.
-    static NodePtr Concatenate(NodePtr a, NodePtr b) {
-      if (!a) {
-        return b;
-      }
-      if (!b) {
-        return a;
-      }
-      if (a->priority() > b->priority()) {
-        // `a` is the new root.
-        a->_right = Concatenate(std::move(a->_right), std::move(b));
-        a->RecomputeReduced();
-        return a;
-      } else {
-        // `b` is the new root
-        b->_left = Concatenate(std::move(a), std::move(b->_left));
-        b->RecomputeReduced();
-        return b;
-      }
-    }
-
-    template <class Fun>
-    static bool Iterate(const NodePtr& node, Fun fun) {
-      if (node) {
-        return Iterate(node->left(), fun)
-            && fun(*node)
-            && Iterate(node->right(), fun);
-      }
-      return true;
-    }
-
-   private:
-    static NodePtr SetLeft(NodePtr old_root, NodePtr new_left) {
-      old_root->_left = std::move(new_left);
-      if (!old_root->left() || old_root->priority() >=old_root->left()->priority()) {
-        // If new left is null or the priorites are OK, just recompute the
-        // reduction and return.
-        old_root->RecomputeReduced();
-        return old_root;
-      } else {
-        return RotateRight(std::move(old_root));
-      }
-    }
-    static NodePtr SetRight(NodePtr old_root, NodePtr new_right) {
-      old_root->_right = std::move(new_right);
-      if (!old_root->right() || old_root->priority() >=old_root->right()->priority()) {
-        // If new_left is null or the priorites are OK, just recompute the
-        // reduction and return.
-        old_root->RecomputeReduced();
-        return old_root;
-      } else {
-        return RotateLeft(std::move(old_root));
-      }
-    }
-    // If the left child has higher priority than root, then rotates that child
-    // to be the root.  Requires that that child is present.  Returns the new
-    // root.
-    static NodePtr RotateRight(NodePtr old_root) {
-      assert(old_root->left());
-      // We shouldn't be rotating unless the priorities are wrong.
-      assert(old_root->priority() < old_root->left()->priority());
-      // We have
-      //               old_root
-      //      old_L            old_R
-      //  old_LL  old_LR
-      //
-      // which becomes
-      //
-      //               old_L
-      //      old_LL           old_root
-      //                    old_LR     old_R
-      NodePtr old_L = std::move(old_root->_left);
-      NodePtr old_LR = std::move(old_L->_right);
-
-      old_root->SetLeftAndUpdateReduced(std::move(old_LR));
-      old_L->SetRightAndUpdateReduced(std::move(old_root));
-
-      return old_L;
-    }
-    // If the right child has higher priority than root, then rotates that child
-    // to be the root.  Requires that that child is present.  Returns the new
-    // root.
-    static NodePtr RotateLeft(NodePtr old_root) {
-      assert(old_root->right());
-      // We shouldn't be rotating unless the priorities are wrong.
-      assert(old_root->priority() < old_root->right()->priority());
-      // We have
-      //               old_root
-      //      old_L            old_R
-      //                    old_RL  old_RR
-      //
-      // which becomes
-      //
-      //               old_R
-      //      old_root          old_RR
-      //    old_L old_RL
-      NodePtr old_R = std::move(old_root->_right);
-      NodePtr old_RL = std::move(old_R->_left);
-
-      old_root->SetRightAndUpdateReduced(std::move(old_RL));
-      old_R->SetLeftAndUpdateReduced(std::move(old_root));
-      return old_R;
-    }
-
-    void SetLeftAndUpdateReduced(NodePtr new_left) {
-      _left = std::move(new_left);
-      RecomputeReduced();
-    }
-
-    void SetRightAndUpdateReduced(NodePtr new_right) {
-      _right = std::move(new_right);
-      RecomputeReduced();
-    }
-
-    void RecomputeReduced() {
-      _reduced = Reducer(key(), value());
-      if (left()) {
-        _reduced = left()->reduced() + std::move(_reduced);
-      }
-      if (right()) {
-        _reduced = std::move(_reduced) + right()->reduced();
-      }
-    }
-    size_t _priority;
-    K _key;
-    V _value;
-    Reducer _reduced;
-    NodePtr _left;
-    NodePtr _right;
-  };
+  // Inserts `{key, value}` into the tree, if it's not there.  If it is there,
+  // then nothing is changed.
+  //
   // Return true if the insertion happened, false if it was already there.
-  bool Insert(K k, V v) {
-    Reducer reduced{k, v};
-    NodePtr node = std::make_unique<Node>(_uniform_distribution(_engine),
-                                          std::move(k),
-                                          std::move(v));
-    bool result;
-    _root = Node::Insert(std::move(_root), std::move(node), result);
-    return result;
+  bool Insert(key_type key, value_type value) {
+    if (Find(key)) {
+      return false;
+    }
+    Ptr node = std::make_unique<Node>(_uniform_distribution(_engine),
+                                      std::move(key),
+                                      std::move(value));
+    _root = Node::Insert(std::move(_root), std::move(node));
+    return true;
   }
-  const Node* Lookup(const K& k) const {
-    return Node::Lookup(_root, k);
+
+  // If `key` is in the tree, then return a reference to the key, the associated
+  // value, and the reduced value at that node.  Else return `std::nullopt`.
+  std::optional<std::tuple<const key_type&,
+                           const value_type&,
+                           const reducer_type&>> Find(const key_type& key) const {
+    return Node::Find(_root, key);
   }
-  bool Erase(K k) {
+
+  // Returns the reduction of all the keys that are `<` key.
+  std::optional<const reducer_type&> Prefix(const key_type& key) const {
+  }
+
+  bool Erase(key_type key) {
     bool erased;
-    _root = Node::Erase(std::move(_root), k, erased);
+    _root = Node::Erase(std::move(_root), key, erased);
     return erased;
   }
-  std::ostream& Print(std::ostream& os) const;
-  void Validate() const;
-  template <class Fun>
-  bool Iterate(Fun fun) const {
-    return Node::Iterate(_root, fun);
+  std::ostream& Print(std::ostream& os) const {
+    os << "(";
+    if (_root) _root->Print(os, 0);
+    os << ")";
+    return os;
+  }
+  void Validate() const {
+    if (_root) {
+      _root->Validate(nullptr, nullptr);
+    }
+  }
+
+  bool ForAll(std::function<bool(const K& key, const V& value, const Reducer& reduced)> fun) const {
+    if (!_root) {
+      return true;
+    }
+    return _root->ForAll(fun);
   }
 
  private:
-  static void PrintNode(std::ostream& os, const NodePtr& node, size_t depth);
-  static void Validate(const NodePtr& root,
-                       const K* lower_bound,
-                       const K* upper_bound);
+  friend std::ostream& operator<<(std::ostream& os, const ReducerTree& tree) {
+    return tree.Print(os);
+  }
 
   std::unique_ptr<Node> _root;
   std::random_device _device;
@@ -256,69 +101,231 @@ class ReducerTree {
 };
 
 template <class K, class V, class Reducer>
-std::ostream& operator<<(std::ostream& os, const ReducerTree<K, V, Reducer>& tree) {
-  return tree.Print(os);
-}
+class ReducerNode {
+ public:
+  using key_type = K;
+  using value_type = V;
+  using reducer_type = Reducer;
 
-template <class K, class V, class Reducer>
-std::ostream& ReducerTree<K, V, Reducer>::Print(std::ostream& os) const {
-  os << "(";
-  PrintNode(os, _root, 0);
-  os << ")";
-  return os;
-}
+  using Ptr = std::unique_ptr<ReducerNode>;
+  // After construction, the _reduced value is in an undefined state.
+  ReducerNode(size_t priority, key_type key, value_type value)
+      :_priority(priority)
+      ,_key(std::move(key))
+      ,_value(std::move(value)) {}
 
-template <class K, class V, class Reducer>
-/*static*/ void ReducerTree<K, V, Reducer>::PrintNode(std::ostream& os,
-                                                      const NodePtr& node,
-                                                      size_t depth) {
-  if (!node) {
-    os << "_";
-    return;
+  // Inserts `node` into the subtree rooted at `root`, returning the new root of
+  // the subtree.  `root` can be null.  `node` must be a node with null
+  // children.  Requires: `node->key` is not in the subtree rooted at `root`.
+  static Ptr Insert(Ptr root, Ptr node) {
+    if (!root) {
+      assert(!node->_left);
+      assert(!node->_right);
+      node->RecomputeReduced();
+      return node;
+    }
+    if (node->_priority < root->_priority) {
+      // root remains root.
+      std::strong_ordering cmp = node->_key <=> root->_key;
+      if (std::is_lt(cmp)) {
+        root->SetLeftAndUpdateReduced(Insert(std::move(root->_right), std::move(node)));
+        return root;
+      }
+      if (std::is_gt(cmp)) {
+        root->SetRightAndUpdateReduced(Insert(std::move(root->_left), std::move(node)));
+        return root;
+      }
+      assert(false);
+    }
+    // node becomes root. Split root according to node's key.
+    auto [new_left, new_right] = Split(std::move(root), node->_key);
+    node->SetBothAndUpdateReduced(std::move(new_left), std::move(new_right));
+    return node;
   }
-  os << "(" << node->key() << " " << node->value() << " " << node->priority() << " " << node->reduced().value();
-  os << std::endl << std::string(depth, ' ') << " ";
-  PrintNode(os, node->left(), depth + 1);
-  os << std::endl << std::string(depth, ' ') << " ";
-  PrintNode(os, node->right(), depth + 1);
-  os << ")";
-  return;
-}
 
-template <class K, class V, class Reducer>
-void ReducerTree<K, V, Reducer>::Validate() const {
-  Validate(_root, nullptr, nullptr);
-}
+  static std::optional<std::tuple<const key_type&,
+                                  const value_type&,
+                                  const reducer_type&>> Find(
+                                      const Ptr& root, const key_type& key) {
+    if (!root) {
+      return std::nullopt;
+    }
+    auto cmp = key <=> root->_key;
+    if (std::is_lt(cmp)) {
+      return Find(root->_left, key);
+    }
+    if (std::is_gt(cmp)) {
+      return Find(root->_right, key);
+    }
+    // Return `root` if key equals.
+    return std::tuple<const key_type&, const value_type&, const reducer_type>(
+        root->_key, root->_value, root->_reduced);
+  }
 
-template <class K, class V, class Reducer>
-/*static*/ void ReducerTree<K, V, Reducer>::Validate(const NodePtr& root,
-                                                     const K* lower_bound,
-                                                     const K* upper_bound) {
-  if (root == nullptr) {
-    return;
+  static Ptr Erase(Ptr node, const K& key, bool& erased) {
+    if (!node) {
+      erased = false;
+      return node;
+    }
+    auto cmp = key <=> node->_key;
+    if (std::is_lt(cmp)) {
+      node->SetLeftAndUpdateReduced(
+          Erase(std::move(node->_left), key, erased));
+      return node;
+    }
+    if (std::is_gt(cmp)) {
+      node->SetRightAndUpdateReduced(
+          Erase(std::move(node->_right), key, erased));
+      return node;
+    }
+    erased = true;
+    return Merge(std::move(node->_left), std::move(node->_right));
   }
-  if (lower_bound) {
-    assert(*lower_bound < root->key());
+
+  // Returns the tree containing all the nodes of `a` and `b`.
+  //
+  // Requires: All keys in `a` are < all keys in `b`.
+  //
+  // Implementation hint: Note that `a` and `b` are both heap ordered by
+  // priority.  So one of `a` and `b` will be the root.
+  static Ptr Merge(Ptr a, Ptr b) {
+    if (!a) {
+      return b;
+    }
+    if (!b) {
+      return a;
+    }
+    if (a->_priority > b->_priority) {
+      // `a` is the new root.
+      a->_right = Merge(std::move(a->_right), std::move(b));
+      a->RecomputeReduced();
+      return a;
+    } else {
+      // `b` is the new root
+      b->_left = Merge(std::move(a), std::move(b->_left));
+      b->RecomputeReduced();
+      return b;
+    }
   }
-  if (upper_bound) {
-    assert(root->key() < *upper_bound);
+
+  static std::tuple<Ptr, Ptr> Split(Ptr node, const key_type &key) {
+    if (!node) {
+      return {nullptr, nullptr};
+    }
+    auto cmp = key <=> node->_key;
+    if (std::is_lt(cmp)) {
+      auto [left, right] = Split(std::move(node->_left), key);
+      node->_left = std::move(right);
+      return {std::move(left), std::move(node)};
+    }
+    if (std::is_gt(cmp)) {
+      auto [left, right] = Split(std::move(node->_right), key);
+      node->_right = std::move(left);
+      return {std::move(node), std::move(right)};
+    }
+    assert(false);
   }
-  Validate(root->left(), lower_bound, &root->key());
-  Validate(root->right(), &root->key(), upper_bound);
-  if (root->left()) {
-    assert(root->priority() > root->left()->priority());
+
+  // Applies `fun` to every node in the tree, (quitting early if `fun` ever
+  // returns `false`).  Returns `true` if `fun` returned `true` every time it's
+  // called.
+  bool ForAll(std::function<bool(const K& key,
+                                 const V& value,
+                                 const Reducer& reducer)> fun) {
+    if (_left && !_left->ForAll(fun)) {
+      return false;
+    }
+    if (!fun(_key, _value, _reduced)) {
+      return false;
+    }
+    if (_right && !_right->ForAll(fun)) {
+      return false;
+    }
+    return true;
   }
-  if (root->right()) {
-    assert(root->priority() > root->right()->priority());
+
+  void Print(std::ostream& os, size_t depth) const {
+    os << "(" << _key << " " << _value << " " << _priority << " " << _reduced.value();
+    if (!_left && !_right) {
+      // Don't use a newline when neither child exists.
+      os << " _ _)";
+      return;
+    }
+    os << std::endl << std::string(depth, ' ') << " ";
+    if (_left) {
+      _left->Print(os, depth + 1);
+      os << std::endl << std::string(depth, ' ') << " ";
+    } else {
+      // For null left ptr we don't use a whole line.
+      os << "_ ";
+      depth += 2; // make things line up in this case.
+    }
+    if (_right) {
+      _right->Print(os, depth + 1);
+    } else {
+      os << "_";
+    }
+    os << ")";
   }
-  Reducer rhere = Reducer(root->key(), root->value());
-  if (root->left()) {
-    rhere = root->left()->reduced() + rhere;
+
+  void Validate(const K* lower_bound, const K* upper_bound) const {
+    if (lower_bound) {
+      assert(*lower_bound < _key);
+    }
+    if (upper_bound) {
+      assert(_key < *upper_bound);
+    }
+    if (_left) {
+      assert(_priority > _left->_priority);
+      _left->Validate(lower_bound, &_key);
+    }
+    if (_right) {
+      assert(_priority > _right->_priority);
+      _right->Validate(&_key, upper_bound);
+    }
+    Reducer rhere = Reducer(_key, _value);
+    if (_left) {
+      rhere = _left->_reduced + rhere;
+    }
+    if (_right) {
+      rhere = rhere + _right->_reduced;
+    }
+    assert(rhere == _reduced);
   }
-  if (root->right()) {
-    rhere = rhere + root->right()->reduced();
+
+ private:
+
+  void SetLeftAndUpdateReduced(Ptr new_left) {
+    _left = std::move(new_left);
+    RecomputeReduced();
   }
-  assert(rhere == root->reduced());
-}
+
+  void SetRightAndUpdateReduced(Ptr new_right) {
+    _right = std::move(new_right);
+    RecomputeReduced();
+  }
+
+  void SetBothAndUpdateReduced(Ptr new_left, Ptr new_right) {
+    _left = std::move(new_left);
+    _right = std::move(new_right);
+    RecomputeReduced();
+  }
+
+  void RecomputeReduced() {
+    _reduced = Reducer(_key, _value);
+    if (_left) {
+      _reduced = _left->_reduced + std::move(_reduced);
+    }
+    if (_right) {
+      _reduced = std::move(_reduced) + _right->_reduced;
+    }
+  }
+  size_t _priority;
+  K _key;
+  [[no_unique_address]] V _value;
+  [[no_unique_address]] Reducer _reduced;
+  Ptr _left;
+  Ptr _right;
+};
 
 #endif  // _REDUCER_TREE_H

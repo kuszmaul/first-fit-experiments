@@ -4,9 +4,9 @@
 
 class StringToLengthReducer {
  public:
+  StringToLengthReducer() = default;
   StringToLengthReducer([[maybe_unused]] size_t k,
-                        const std::string& value) :_size(value.size()) {
-  }
+                        const std::string& value) :_size(value.size()) {}
   StringToLengthReducer operator+(const StringToLengthReducer& other) const {
     return StringToLengthReducer(_size + other._size);
   }
@@ -23,19 +23,23 @@ template<class T, class C>
 void CheckTreeContains(const T& tree, const C& ordered_container) {
   // Everything in the container is in the tree.
   for (const auto& [key, value] : ordered_container ) {
-    auto result = tree.Lookup(key);
+    auto result = tree.Find(key);
     assert(result);
-    assert(result->key() == key);
-    assert(result->value() == value);
+    const auto& [found_key, found_value, found_reducer] = *result;
+    assert(found_key == key);
+    assert(found_value == value);
   }
   // The set of values returned by the tree iterator exactly equals the set in
   // `ordered_container`.
   C found_values;
-  tree.Iterate([&](const T::Node& node) {
-    auto [it, inserted] = found_values.insert({node.key(), node.value()});
+  bool all_ok = tree.ForAll([&](const T::key_type& key,
+                                const T::value_type& value,
+                                [[maybe_unused]] const T::reducer_type& reduced) {
+    auto [it, inserted] = found_values.insert({key, value});
     assert(inserted);
     return true;
   });
+  assert(all_ok);
   assert(found_values == ordered_container);
 }
 
