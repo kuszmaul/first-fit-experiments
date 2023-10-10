@@ -5,18 +5,35 @@
 class StringToLengthReducer {
  public:
   StringToLengthReducer() = default;
-  StringToLengthReducer([[maybe_unused]] size_t k,
+  StringToLengthReducer(size_t,
                         const std::string& value) :_size(value.size()) {}
   StringToLengthReducer operator+(const StringToLengthReducer& other) const {
     return StringToLengthReducer(_size + other._size);
   }
-  bool operator==(const StringToLengthReducer& other) const {
-    return _size == other._size;
-  }
   size_t value() const { return _size; }
+  size_t value_view() const { return _size; }
  private:
   explicit StringToLengthReducer(size_t size) :_size(size) {}
   size_t _size;
+};
+
+struct Empty {};
+std::ostream& operator<<(std::ostream& os, Empty) {
+  return os << "{}";
+}
+
+class StringCatReducer {
+ public:
+  StringCatReducer() = default;
+  explicit StringCatReducer(std::string k, Empty = Empty())
+      :_string(std::move(k)) {}
+  StringCatReducer operator+(const StringCatReducer& other) const {
+    return StringCatReducer(_string + other._string);
+  }
+  std::string value() const { return _string; }
+  const std::string& value_value() const { return _string; }
+ private:
+  std::string _string;
 };
 
 template<class T, class C>
@@ -43,6 +60,43 @@ void CheckTreeContains(const T& tree, const C& ordered_container) {
   assert(found_values == ordered_container);
 }
 
+static void NodeTestSplitEmpty() {
+  using Node = ReducerNode<std::string, Empty, StringCatReducer>;
+  auto [l, r] = Node::Split(nullptr, "a");
+  assert(!l && !r);
+}
+
+static void NodeTestSplitOneLeft() {
+  using Node = ReducerNode<std::string, Empty, StringCatReducer>;
+  auto [l, r] = Node::Split(Node::MakeNodeForTest(10, "b", Empty()), "a");
+  assert(!l);
+  assert(r);
+  assert(r->KeyForTest() == "b");
+}
+
+static void NodeTestSplitOneRight() {
+  using Node = ReducerNode<std::string, Empty, StringCatReducer>;
+  auto [l, r] = Node::Split(Node::MakeNodeForTest(10, "b", Empty()), "c");
+  assert(l);
+  assert(l->KeyForTest() == "b");
+  assert(!r);
+}
+
+static void NodeTestInsert() {
+  using Node = ReducerNode<std::string, Empty, StringCatReducer>;
+  Node::Ptr b = Node::MakeNodeForTest(2, "b", Empty());
+  Node *bp = b.get();
+  Node::Ptr a = Node::MakeNodeForTest(3, "a", Empty(), nullptr, std::move(b));
+  Node *ap = a.get();
+  Node::Ptr c = Node::MakeNodeForTest(1, "c", Empty());
+  //Node *cp = b.get();
+  Node::Ptr new_root = Node::Insert(std::move(a), std::move(c));
+  std::cout << __FILE__ << ":" << __LINE__ << " " << new_root << std::endl;
+  assert(new_root.get() == ap && new_root->KeyForTest() == "a");
+  assert(new_root->LeftForTest() == nullptr);
+  assert(new_root->RightForTest() == bp);
+}
+
 static void Test1() {
   ReducerTree<size_t, std::string, StringToLengthReducer> tree;
   tree.Validate();
@@ -62,6 +116,48 @@ static void Test1() {
   CheckTreeContains(tree, expect);
 }
 
+static void Test2() {
+  ReducerTree<std::string, Empty, StringCatReducer> tree;
+  tree.Validate();
+  assert(tree.Insert("a", Empty()));
+
+  assert(tree.Insert("b", Empty()));
+  assert(tree.PrefixLt("a").value() == "");
+  assert(tree.PrefixLt("b").value() == "a");
+  assert(tree.PrefixLt("zzz").value() == "ab");
+
+  std::cout << "AB:" << std::endl << tree << std::endl;
+  tree.Validate();
+  assert(tree.Insert("c", Empty()));
+  std::cout << "ABC:" << std::endl << tree << std::endl;
+  tree.Validate();
+  assert(tree.PrefixLt("a").value() == "");
+  assert(tree.PrefixLt("b").value() == "a");
+  assert(tree.PrefixLt("c").value() == "ab");
+  assert(tree.PrefixLt("zzz").value() == "abc");
+
+  assert(tree.Insert("d", Empty()));
+  assert(tree.PrefixLt("a").value() == "");
+  assert(tree.PrefixLt("b").value() == "a");
+  assert(tree.PrefixLt("c").value() == "ab");
+  assert(tree.PrefixLt("d").value() == "abc");
+  assert(tree.PrefixLt("zzz").value() == "abcd");
+
+  assert(tree.Insert("e", Empty()));
+  assert(tree.Insert("f", Empty()));
+  assert(tree.PrefixLt("a").value() == "");
+  std::cout << tree << std::endl;
+  std::cout << tree.PrefixLt("b").value() << std::endl;
+  assert(tree.PrefixLt("b").value() == "a");
+  std::cout << tree.PrefixLt("c").value() << std::endl;
+  assert(tree.PrefixLt("c").value() == "ab");
+}
+
 int main() {
+  NodeTestSplitEmpty();
+  NodeTestSplitOneLeft();
+  NodeTestSplitOneRight();
+  NodeTestInsert();
   Test1();
+  Test2();
 }

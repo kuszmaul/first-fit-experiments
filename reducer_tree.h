@@ -49,6 +49,7 @@ class ReducerTree {
     Ptr node = std::make_unique<Node>(_uniform_distribution(_engine),
                                       std::move(key),
                                       std::move(value));
+    std::cout << "Inserting " << node << std::endl;
     _root = Node::Insert(std::move(_root), std::move(node));
     return true;
   }
@@ -62,9 +63,12 @@ class ReducerTree {
   }
 
   // Returns the reduction of all the keys that are `<` key.
-  std::optional<const reducer_type&> Prefix(const key_type& key) const {
+  reducer_type PrefixLt(const key_type& key) const {
+    return Node::PrefixLt(_root, key);
   }
 
+  // Removes the node whose key equals `key`, if there is one.  Returns true if
+  // a node was removed.
   bool Erase(key_type key) {
     bool erased;
     _root = Node::Erase(std::move(_root), key, erased);
@@ -117,7 +121,8 @@ class ReducerNode {
   // Inserts `node` into the subtree rooted at `root`, returning the new root of
   // the subtree.  `root` can be null.  `node` must be a node with null
   // children.  Requires: `node->key` is not in the subtree rooted at `root`.
-  static Ptr Insert(Ptr root, Ptr node) {
+  static Ptr Insert(Ptr root, Ptr node, size_t depth = 0) {
+    std::cout << std::string(depth, ' ') << "Inserting " << node << " into " << std::endl;
     if (!root) {
       assert(!node->_left);
       assert(!node->_right);
@@ -126,13 +131,16 @@ class ReducerNode {
     }
     if (node->_priority < root->_priority) {
       // root remains root.
+      std::cout << "Root remains root: Before: " << root << std::endl;
       std::strong_ordering cmp = node->_key <=> root->_key;
       if (std::is_lt(cmp)) {
-        root->SetLeftAndUpdateReduced(Insert(std::move(root->_right), std::move(node)));
+        std::cout << std::string(depth, ' ') << "Updating left" << std::endl;
+        root->SetLeftAndUpdateReduced(Insert(std::move(root->_left), std::move(node), depth + 1));
         return root;
       }
       if (std::is_gt(cmp)) {
-        root->SetRightAndUpdateReduced(Insert(std::move(root->_left), std::move(node)));
+        std::cout << "Updating right" << std::endl;
+        root->SetRightAndUpdateReduced(Insert(std::move(root->_right), std::move(node), depth + 1));
         return root;
       }
       assert(false);
@@ -226,6 +234,31 @@ class ReducerNode {
     assert(false);
   }
 
+  static Reducer Reduce(const Ptr& node) {
+    if (node) {
+      return node->_reduced;
+    } else {
+      return Reducer();
+    }
+  }
+
+  static Reducer PrefixLt(const Ptr& node, const key_type &key) {
+    if (!node) {
+      return Reducer();
+    }
+    auto cmp = key <=> node->_key;
+    if (std::is_lt(cmp)) {
+      return PrefixLt(node->_left, key);
+    }
+    if (std::is_eq(cmp)) {
+      return Reduce(node->_left);
+    }
+    if (std::is_gt(cmp)) {
+      return Reduce(node->_left) + Reducer(node->_key, node->_value) + PrefixLt(node->_right, key);
+    }
+    assert(false);
+  }
+
   // Applies `fun` to every node in the tree, (quitting early if `fun` ever
   // returns `false`).  Returns `true` if `fun` returned `true` every time it's
   // called.
@@ -244,28 +277,33 @@ class ReducerNode {
     return true;
   }
 
-  void Print(std::ostream& os, size_t depth) const {
+  std::ostream& Print(std::ostream& os, size_t depth, bool pretty_print = true) const {
     os << "(" << _key << " " << _value << " " << _priority << " " << _reduced.value();
     if (!_left && !_right) {
       // Don't use a newline when neither child exists.
-      os << " _ _)";
-      return;
+      return os << " _ _)";
     }
-    os << std::endl << std::string(depth, ' ') << " ";
+    if (pretty_print) {
+      os << std::endl << std::string(depth, ' ');
+    }
+    os << " ";
     if (_left) {
-      _left->Print(os, depth + 1);
-      os << std::endl << std::string(depth, ' ') << " ";
+      _left->Print(os, depth + 1, pretty_print);
+      if (pretty_print) {
+        os << std::endl << std::string(depth, ' ');
+      }
+      os << " ";
     } else {
       // For null left ptr we don't use a whole line.
       os << "_ ";
       depth += 2; // make things line up in this case.
     }
     if (_right) {
-      _right->Print(os, depth + 1);
+      _right->Print(os, depth + 1, pretty_print);
     } else {
       os << "_";
     }
-    os << ")";
+    return os << ")";
   }
 
   void Validate(const K* lower_bound, const K* upper_bound) const {
@@ -290,10 +328,29 @@ class ReducerNode {
     if (_right) {
       rhere = rhere + _right->_reduced;
     }
-    assert(rhere == _reduced);
+    assert(rhere.value() == _reduced.value());
   }
 
+  static Ptr MakeNodeForTest(size_t priority, K key, V value,
+                             Ptr left = nullptr, Ptr right= nullptr) {
+    Ptr result = std::make_unique<ReducerNode>(
+        priority, std::move(key), std::move(value));
+    result->SetBothAndUpdateReduced(std::move(left), std::move(right));
+    return result;
+  }
+
+  // Returns the key.
+  K KeyForTest() const { return _key; }
+
+  // Returns the leftchild, as a raw pointer.
+  const ReducerNode* LeftForTest() const { return _left.get(); }
+  // Returns the right child, as a raw pointer.
+  const ReducerNode* RightForTest() const { return _right.get(); }
+
  private:
+  friend std::ostream& operator<<(std::ostream& os, const Ptr& p) {
+    return p->Print(os, 0, false);
+  }
 
   void SetLeftAndUpdateReduced(Ptr new_left) {
     _left = std::move(new_left);
