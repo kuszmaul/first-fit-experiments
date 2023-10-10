@@ -121,8 +121,7 @@ class ReducerNode {
   // Inserts `node` into the subtree rooted at `root`, returning the new root of
   // the subtree.  `root` can be null.  `node` must be a node with null
   // children.  Requires: `node->key` is not in the subtree rooted at `root`.
-  static Ptr Insert(Ptr root, Ptr node, size_t depth = 0) {
-    std::cout << std::string(depth, ' ') << "Inserting " << node << " into " << std::endl;
+  static Ptr Insert(Ptr root, Ptr node) {
     if (!root) {
       assert(!node->_left);
       assert(!node->_right);
@@ -131,16 +130,14 @@ class ReducerNode {
     }
     if (node->_priority < root->_priority) {
       // root remains root.
-      std::cout << "Root remains root: Before: " << root << std::endl;
       std::strong_ordering cmp = node->_key <=> root->_key;
       if (std::is_lt(cmp)) {
         std::cout << std::string(depth, ' ') << "Updating left" << std::endl;
-        root->SetLeftAndUpdateReduced(Insert(std::move(root->_left), std::move(node), depth + 1));
+        root->SetLeftAndUpdateReduced(Insert(std::move(root->_left), std::move(node)));
         return root;
       }
       if (std::is_gt(cmp)) {
-        std::cout << "Updating right" << std::endl;
-        root->SetRightAndUpdateReduced(Insert(std::move(root->_right), std::move(node), depth + 1));
+        root->SetRightAndUpdateReduced(Insert(std::move(root->_right), std::move(node)));
         return root;
       }
       assert(false);
