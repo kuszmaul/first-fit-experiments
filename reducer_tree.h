@@ -12,8 +12,8 @@
  * We rely on the spaceship operator <=> working for keys.
  */
 
-#ifndef _REDUCER_TREE_H
-#define _REDUCER_TREE_H
+#ifndef REDUCER_TREE_H_
+#define REDUCER_TREE_H_
 
 #include <cassert>
 #include <cstddef>
@@ -49,8 +49,8 @@ class ReducerTree {
     Ptr node = std::make_unique<Node>(_uniform_distribution(_engine),
                                       std::move(key),
                                       std::move(value));
-    std::cout << "Inserting " << node << std::endl;
     _root = Node::Insert(std::move(_root), std::move(node));
+    ++_size;
     return true;
   }
 
@@ -72,18 +72,21 @@ class ReducerTree {
   bool Erase(key_type key) {
     bool erased;
     _root = Node::Erase(std::move(_root), key, erased);
+    if (erased) --_size;
     return erased;
   }
   std::ostream& Print(std::ostream& os) const {
-    os << "(";
-    if (_root) _root->Print(os, 0);
-    os << ")";
+    os << "{";
+    if (_root) _root->Print(os, 1);
+    os << "}";
     return os;
   }
   void Validate() const {
+    size_t size = 0;
     if (_root) {
-      _root->Validate(nullptr, nullptr);
+      size = _root->Validate(nullptr, nullptr);
     }
+    assert(size == _size);
   }
 
   bool ForAll(std::function<bool(const K& key, const V& value, const Reducer& reduced)> fun) const {
@@ -93,12 +96,16 @@ class ReducerTree {
     return _root->ForAll(fun);
   }
 
+  size_t Size() const { return _size; }
+  bool Empty() const { return _size == 0; }
+
  private:
   friend std::ostream& operator<<(std::ostream& os, const ReducerTree& tree) {
     return tree.Print(os);
   }
 
   std::unique_ptr<Node> _root;
+  size_t _size = 0;
   std::random_device _device;
   std::default_random_engine _engine{_device()};
   std::uniform_int_distribution<size_t> _uniform_distribution;
@@ -132,7 +139,6 @@ class ReducerNode {
       // root remains root.
       std::strong_ordering cmp = node->_key <=> root->_key;
       if (std::is_lt(cmp)) {
-        std::cout << std::string(depth, ' ') << "Updating left" << std::endl;
         root->SetLeftAndUpdateReduced(Insert(std::move(root->_left), std::move(node)));
         return root;
       }
@@ -220,12 +226,12 @@ class ReducerNode {
     auto cmp = key <=> node->_key;
     if (std::is_lt(cmp)) {
       auto [left, right] = Split(std::move(node->_left), key);
-      node->_left = std::move(right);
+      node->SetLeftAndUpdateReduced(std::move(right));
       return {std::move(left), std::move(node)};
     }
     if (std::is_gt(cmp)) {
       auto [left, right] = Split(std::move(node->_right), key);
-      node->_right = std::move(left);
+      node->SetRightAndUpdateReduced(std::move(left));
       return {std::move(node), std::move(right)};
     }
     assert(false);
@@ -303,20 +309,28 @@ class ReducerNode {
     return os << ")";
   }
 
-  void Validate(const K* lower_bound, const K* upper_bound) const {
+  // Validates a subtree.  All entries must be strictly between `lower_bound`
+  // and `upper_bound`.  The subtree must be priority-heap ordered (parents may
+  // not have lower priority than children).  The reducer values must be
+  // correct.
+  //
+  // Returns the size of the subtree.
+  size_t Validate(const K* lower_bound, const K* upper_bound) const {
     if (lower_bound) {
       assert(*lower_bound < _key);
     }
     if (upper_bound) {
       assert(_key < *upper_bound);
     }
+    size_t left_size = 0;
     if (_left) {
-      assert(_priority > _left->_priority);
-      _left->Validate(lower_bound, &_key);
+      assert(_priority >= _left->_priority);
+      left_size = _left->Validate(lower_bound, &_key);
     }
+    size_t right_size = 0;
     if (_right) {
-      assert(_priority > _right->_priority);
-      _right->Validate(&_key, upper_bound);
+      assert(_priority >= _right->_priority);
+      right_size = _right->Validate(&_key, upper_bound);
     }
     Reducer rhere = Reducer(_key, _value);
     if (_left) {
@@ -326,6 +340,7 @@ class ReducerNode {
       rhere = rhere + _right->_reduced;
     }
     assert(rhere.value() == _reduced.value());
+    return 1 + left_size + right_size;
   }
 
   static Ptr MakeNodeForTest(size_t priority, K key, V value,
@@ -382,4 +397,4 @@ class ReducerNode {
   Ptr _right;
 };
 
-#endif  // _REDUCER_TREE_H
+#endif  // REDUCER_TREE_H_
